@@ -17,6 +17,7 @@
 
 package com.antony.muzei.pixiv;
 
+import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
@@ -28,6 +29,7 @@ import android.util.Log;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.core.app.RemoteActionCompat;
 import androidx.core.content.FileProvider;
 import androidx.preference.PreferenceManager;
 
@@ -58,49 +60,73 @@ public class PixivArtProvider extends MuzeiArtProvider
 	}
 
 	@Override
-	@NonNull
-	protected List<UserCommand> getCommands(@NonNull Artwork artwork)
+	protected List<RemoteActionCompat> getCommandActions(Artwork artwork)
 	{
-		super.getCommands(artwork);
-		LinkedList<UserCommand> commands = new LinkedList<>();
-		// Android 10 limits the ability for activities to run in the background
-		if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P)
-		{
-			UserCommand addToBookmark = new UserCommand(COMMAND_ADD_TO_BOOKMARKS, getContext().getString(R.string.command_addToBookmark));
-			commands.add(addToBookmark);
-			UserCommand openIntentImage = new UserCommand(COMMAND_VIEW_IMAGE_DETAILS, getContext().getString(R.string.command_viewArtworkDetails));
-			UserCommand shareImage = new UserCommand(COMMAND_SHARE_IMAGE, getContext().getString(R.string.command_shareImage));
-			commands.add(shareImage);
-			commands.add(openIntentImage);
-		}
-		return commands;
+		List<RemoteActionCompat> list = null;
+		list.add(addToBookmarks(artwork));
+		list.add(shareImage(artwork));
+		list.add(viewArtworkDetailsAlternate(artwork));
+		return list;
 	}
 
-	@Override
-	protected void onCommand(@NonNull Artwork artwork, int id)
+//	@Override
+//	@NonNull
+//	protected List<UserCommand> getCommands(@NonNull Artwork artwork)
+//	{
+//		super.getCommands(artwork);
+//		LinkedList<UserCommand> commands = new LinkedList<>();
+//		// Android 10 limits the ability for activities to run in the background
+//		if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P)
+//		{
+//			UserCommand addToBookmark = new UserCommand(COMMAND_ADD_TO_BOOKMARKS, getContext().getString(R.string.command_addToBookmark));
+//			commands.add(addToBookmark);
+//			UserCommand openIntentImage = new UserCommand(COMMAND_VIEW_IMAGE_DETAILS, getContext().getString(R.string.command_viewArtworkDetails));
+//			UserCommand shareImage = new UserCommand(COMMAND_SHARE_IMAGE, getContext().getString(R.string.command_shareImage));
+//			commands.add(shareImage);
+//			commands.add(openIntentImage);
+//		}
+//		return commands;
+//	}
+//
+//	@Override
+//	protected void onCommand(@NonNull Artwork artwork, int id)
+//	{
+//		Handler handler = new Handler(Looper.getMainLooper());
+//		switch (id)
+//		{
+//			case COMMAND_ADD_TO_BOOKMARKS:
+//				addToBookmarks(artwork);
+//				handler.post(() -> Toast.makeText(getContext(), getContext().getString(R.string.toast_addingToBookmarks), Toast.LENGTH_SHORT).show());
+//				break;
+//			case COMMAND_VIEW_IMAGE_DETAILS:
+//				String token = artwork.getToken();
+//				Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("http://www.pixiv.net/member_illust.php?mode=medium&illust_id=" + token));
+//				intent.setFlags(FLAG_ACTIVITY_NEW_TASK);
+//				getContext().startActivity(intent);
+//				break;
+//			case COMMAND_SHARE_IMAGE:
+//				shareImage(artwork);
+//				break;
+//		}
+//	}
+
+	private RemoteActionCompat viewArtworkDetailsAlternate(Artwork artwork)
 	{
-		Handler handler = new Handler(Looper.getMainLooper());
-		switch (id)
-		{
-			case COMMAND_ADD_TO_BOOKMARKS:
-				addToBookmarks(artwork);
-				handler.post(() -> Toast.makeText(getContext(), getContext().getString(R.string.toast_addingToBookmarks), Toast.LENGTH_SHORT).show());
-				break;
-			case COMMAND_VIEW_IMAGE_DETAILS:
-				String token = artwork.getToken();
-				Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("http://www.pixiv.net/member_illust.php?mode=medium&illust_id=" + token));
-				intent.setFlags(FLAG_ACTIVITY_NEW_TASK);
-				getContext().startActivity(intent);
-				break;
-			case COMMAND_SHARE_IMAGE:
-				shareImage(artwork);
-				break;
-		}
+		String token = artwork.getToken();
+		Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("http://www.pixiv.net/member_illust.php?mode=medium&illust_id=" + token));
+		intent.setFlags(FLAG_ACTIVITY_NEW_TASK);
+		return new RemoteActionCompat(null,
+				getContext().getString(R.string.command_viewArtworkDetails),
+				"sample Description",
+				PendingIntent.getActivity(getContext(),
+						0,
+						intent,
+						PendingIntent.FLAG_UPDATE_CURRENT));
 	}
 
 	// Provided you are logged in, adds the currently displayed images to your Pixiv bookmarks
 	// Only works on Android 9 and lower, as Android 10 limits the ability to start activities in the background
-	private void addToBookmarks(Artwork artwork)
+	private RemoteActionCompat addToBookmarks(Artwork artwork)
 	{
 		Log.d("ANTONY_WORKER", "addToBookmarks(): Entered");
 		SharedPreferences sharedPrefs = PreferenceManager.getDefaultSharedPreferences(getContext());
@@ -113,15 +139,22 @@ public class PixivArtProvider extends MuzeiArtProvider
 			Log.d("ANTONY_WORKER", "No access token found");
 			new Handler(Looper.getMainLooper()).post(() ->
 					Toast.makeText(getContext(), getContext().getString(R.string.toast_loginFirst), Toast.LENGTH_SHORT).show());
-			return;
+			return null;
 		}
 		PixivArtService.sendPostRequest(accessToken, artwork.getToken());
 		Log.d("ANTONY_WORKER", "Added to bookmarks");
+		return new RemoteActionCompat(null,
+				getContext().getString(R.string.command_viewArtworkDetails),
+				"sample Description",
+				PendingIntent.getActivity(getContext(),
+						0,
+						new Intent(PixivArtService.sendPostRequest(accessToken, artwork.getToken())),
+						PendingIntent.FLAG_UPDATE_CURRENT));
 	}
 
 	// Creates an intent and shares the image
 	// Only works on Android 9 and lower, as Android 10 limits the ability to start activities in the background
-	private void shareImage(Artwork artwork)
+	private RemoteActionCompat shareImage(Artwork artwork)
 	{
 		Log.d("ANTONY_WORKER", "Opening sharing ");
 		File newFile = new File(getContext().getExternalFilesDir(Environment.DIRECTORY_PICTURES), artwork.getToken() + ".png");
@@ -133,6 +166,12 @@ public class PixivArtProvider extends MuzeiArtProvider
 
 		Intent chooserIntent = Intent.createChooser(sharingIntent, null);
 		chooserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-		getContext().startActivity(chooserIntent);
+		return new RemoteActionCompat(null,
+				getContext().getString(R.string.command_shareImage),
+				"sample Description",
+				PendingIntent.getActivity(getContext(),
+						0,
+						chooserIntent,
+						PendingIntent.FLAG_UPDATE_CURRENT));
 	}
 }
