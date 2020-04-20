@@ -21,24 +21,20 @@ import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.widget.Toast;
 
-import androidx.annotation.NonNull;
 import androidx.core.app.RemoteActionCompat;
 import androidx.core.content.FileProvider;
 import androidx.preference.PreferenceManager;
 
-import com.google.android.apps.muzei.api.UserCommand;
 import com.google.android.apps.muzei.api.provider.Artwork;
 import com.google.android.apps.muzei.api.provider.MuzeiArtProvider;
 
 import java.io.File;
-import java.util.LinkedList;
 import java.util.List;
 
 import static android.content.Intent.FLAG_ACTIVITY_NEW_TASK;
@@ -141,15 +137,16 @@ public class PixivArtProvider extends MuzeiArtProvider
 					Toast.makeText(getContext(), getContext().getString(R.string.toast_loginFirst), Toast.LENGTH_SHORT).show());
 			return null;
 		}
-		PixivArtService.sendPostRequest(accessToken, artwork.getToken());
+
+		Intent addToBookmarkIntent = new Intent(getContext(), AddToBookmarkService.class);
+		addToBookmarkIntent.putExtra("key", artwork.getToken());
+		PendingIntent pendingIntent = PendingIntent.getService(getContext(), 0, addToBookmarkIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+
 		Log.d("ANTONY_WORKER", "Added to bookmarks");
 		return new RemoteActionCompat(null,
-				getContext().getString(R.string.command_viewArtworkDetails),
-				"sample Description",
-				PendingIntent.getActivity(getContext(),
-						0,
-						new Intent(PixivArtService.sendPostRequest(accessToken, artwork.getToken())),
-						PendingIntent.FLAG_UPDATE_CURRENT));
+				"Add to bookmarks",
+				"sample description",
+				pendingIntent);
 	}
 
 	// Creates an intent and shares the image
