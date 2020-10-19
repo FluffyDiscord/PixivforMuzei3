@@ -24,12 +24,13 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.antony.muzei.pixiv.R
+import com.antony.muzei.pixiv.provider.network.OkHttpSingleton
 import okhttp3.*
 import java.io.IOException
 import java.util.*
 
 class AddToBookmarkService : Service() {
-    var client = OkHttpClient()
+    var client = OkHttpSingleton.getInstance().newBuilder().build()
     override fun onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
         createNotificationChannel()
         val notificationBuilder = NotificationCompat.Builder(this, CHANNEL_ID)
