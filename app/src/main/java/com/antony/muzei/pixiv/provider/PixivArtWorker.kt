@@ -21,7 +21,6 @@ import android.Manifest
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.database.Cursor
 import android.net.Uri
@@ -37,7 +36,6 @@ import com.antony.muzei.pixiv.AppDatabase
 import com.antony.muzei.pixiv.PixivMuzeiSupervisor.getAccessToken
 import com.antony.muzei.pixiv.PixivMuzeiSupervisor.post
 import com.antony.muzei.pixiv.R
-import com.antony.muzei.pixiv.login.OauthResponse
 import com.antony.muzei.pixiv.provider.exceptions.AccessTokenAcquisitionException
 import com.antony.muzei.pixiv.provider.exceptions.CorruptFileException
 import com.antony.muzei.pixiv.provider.exceptions.FilterMatchNotFoundException
@@ -68,7 +66,6 @@ class PixivArtWorker(
         private val IMAGE_EXTENSIONS = arrayOf(".png", ".jpg")
         private var clearArtwork = false
 
-        @JvmStatic
         fun enqueueLoad(clear: Boolean, context: Context?) {
             if (clear) {
                 clearArtwork = true
@@ -91,25 +88,6 @@ class PixivArtWorker(
             // This is good for saturating a network link and for fast picture downloads
             // However, race conditions develop if work required is authenticated
             // unique work ensures that only one Artwork is being processed at once
-        }
-
-        /**
-         * Upon successful authentication stores tokens returned from Pixiv into device memory
-         *
-         * @deprecated use {@link PixivInstrumentation#updateTokenLocal(Context, OauthResponse.PixivOauthResponse)} instead
-         */
-        @JvmStatic
-        fun storeTokens(sharedPrefs: SharedPreferences, response: OauthResponse) {
-            Log.i(LOG_TAG, "Storing tokens")
-            sharedPrefs.edit().apply {
-                putString("accessToken", response.pixivOauthResponse.access_token)
-                putLong("accessTokenIssueTime", System.currentTimeMillis() / 1000)
-                putString("refreshToken", response.pixivOauthResponse.refresh_token)
-                putString("userId", response.pixivOauthResponse.user.id)
-                putString("name", response.pixivOauthResponse.user.name)
-                apply()
-            }
-            Log.i(LOG_TAG, "Stored tokens")
         }
     }
 
@@ -170,7 +148,7 @@ class PixivArtWorker(
     */
     @Throws(IOException::class, CorruptFileException::class)
     private fun getLocalFileExtension(image: File): FileType {
-        Log.d("TYPEC", "getting file type")
+        Log.d(LOG_TAG, "getting file type")
         val randomAccessFile = RandomAccessFile(image, "r")
         val byteArray = ByteArray(10)
         randomAccessFile.read(byteArray, 0, 2)
@@ -181,17 +159,19 @@ class PixivArtWorker(
         if (byteArray[0] == 0x89.toByte() && byteArray[1] == 0x50.toByte()) {
             randomAccessFile.seek(image.length() - 8)
             if (randomAccessFile.readShort() == 0x4945.toShort() && randomAccessFile.readShort() == 0x4E44.toShort()) {
-                Log.d("TYPEC", "PNG")
+                Log.d(LOG_TAG, "PNG")
                 fileType = FileType.PNG
             } else {
+                randomAccessFile.close()
                 throw CorruptFileException("Corrupt PNG")
             }
         } else if (byteArray[0] == 0xFF.toByte() && byteArray[1] == 0xD8.toByte()) {
             randomAccessFile.seek(image.length() - 2)
             if (randomAccessFile.readShort() == 0xFFD9.toShort()) {
-                Log.d("TYPEC", "JPG")
+                Log.d(LOG_TAG, "JPG")
                 fileType = FileType.JPEG
             } else {
+                randomAccessFile.close()
                 throw CorruptFileException("Corrupt JPG")
             }
         }
@@ -282,7 +262,7 @@ class PixivArtWorker(
                 // If the image has already been downloaded, do not redownload
                 val imagePng = File(directoryString, "$filename.png")
                 val imageJpg = File(directoryString, "$filename.jpg")
-                if (!imageJpg.exists() || !imagePng.exists()) {
+                if (!imageJpg.exists() && !imagePng.exists()) {
                     if (fileExtension == FileType.PNG) {
                         fosExternal = FileOutputStream(imagePng)
                         context.sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(imagePng)))
@@ -377,27 +357,10 @@ class PixivArtWorker(
             (AppDatabase.getInstance(applicationContext)?.deletedArtworkIdDao()?.isRowIsExist(artworkId)!!)
 
 
-    private fun generateShuffledArray(length: Int): IntArray {
-        //return (0 .. length).toMutableList().shuffle()
-
-        // Not sure if the above has acceptable performance, but it is a hell of a lot more nicer
-        val random = Random()
-        val array = IntArray(length)
-        for (i in 0 until length) {
-            array[i] = i
-        }
-        for (i in length - 1 downTo 1) {
-            val index = random.nextInt(length)
-            val a = array[index]
-            array[index] = array[i]
-            array[i] = a
-        }
-        return array
-    }
-
     /*
-        Receives a JSON of the ranking artworks.
-        Passes it off to filterArtworkRanking(), then builds the Artwork for submission to Muzei
+        Receives a Contents object, which contains a representnation of a set of artworks
+        Passes it off to filterArtworkRanking(), which returns one ranking artwork
+        Builds an Artwork object off returned ranking artwork
      */
     @Throws(IOException::class, CorruptFileException::class, FilterMatchNotFoundException::class)
     private fun getArtworkRanking(contents: Contents?): Artwork {
@@ -428,7 +391,7 @@ class PixivArtWorker(
         val minimumViews = sharedPrefs.getInt("prefSlider_minViews", 0)
 
         // Filtering
-        val rankingArtwork = filterArtworkRanking(contents.artworks,
+        val rankingArtwork = filterArtworkRanking(contents.artworks.toMutableList(),
                 showManga,
                 rankingFilterSelect,
                 aspectRatioSettings,
@@ -471,14 +434,14 @@ class PixivArtWorker(
     }
 
     /*
-        Filters through the JSON containing the metadata of the pictures of the selected mode
-        Picks one image based on the user's setting to show manga and level of NSFW filtering
+        Filters through a MutableList containing RankingArtwork's.
+        Picks one image based on the user's various filtering settings.
 
             NSFW filtering is performed by checking the value of the "sexual" JSON string
             Manga filtering is performed by checking the value of the "illust_type" JSON string
     */
     @Throws(FilterMatchNotFoundException::class)
-    private fun filterArtworkRanking(rankingArtworkList: List<RankingArtwork>,
+    private fun filterArtworkRanking(rankingArtworkList: MutableList<RankingArtwork>,
                                      showManga: Boolean,
                                      selectedFilterLevelSet: Set<String>?,
                                      aspectRatioSetting: Int,
@@ -487,59 +450,47 @@ class PixivArtWorker(
                                      minimumHeight: Int
     ): RankingArtwork? {
         Log.i(LOG_TAG, "filterRanking(): Entering")
-        var rankingArtwork: RankingArtwork? = null
-        var found = false
-        val shuffledArray = generateShuffledArray(rankingArtworkList.size)
-        for (i in rankingArtworkList.indices) {
-            rankingArtwork = rankingArtworkList[shuffledArray[i]]
-            if (isDuplicateArtwork(rankingArtwork.illust_id)) {
-                Log.v(LOG_TAG, "Duplicate ID: " + rankingArtwork.illust_id)
+        rankingArtworkList.shuffle()
+        for (randomArtwork in rankingArtworkList) {
+            if (isDuplicateArtwork(randomArtwork.illust_id)) {
+                Log.v(LOG_TAG, "Duplicate ID: " + randomArtwork.illust_id)
                 continue
             }
-            if (!isEnoughViews(rankingArtwork.view_count, minimumViews)) {
+            if (!isEnoughViews(randomArtwork.view_count, minimumViews)) {
                 Log.v(LOG_TAG, "Not enough views")
                 continue
             }
-            if (!showManga && rankingArtwork.illust_type != 0) {
-                Log.v(LOG_TAG, "Manga not desired " + rankingArtwork.illust_id)
+            if (!showManga && randomArtwork.illust_type != 0) {
+                Log.v(LOG_TAG, "Manga not desired " + randomArtwork.illust_id)
                 continue
             }
-            if (!isDesiredAspectRatio(rankingArtwork.width,
-                            rankingArtwork.height, aspectRatioSetting)) {
+            if (!isDesiredAspectRatio(randomArtwork.width,
+                            randomArtwork.height, aspectRatioSetting)) {
                 Log.v(LOG_TAG, "Rejecting aspect ratio")
                 continue
             }
-
-            if (!hasDesiredPixelSize(rankingArtwork.width, rankingArtwork.height, minimumWidth, minimumHeight, aspectRatioSetting)) {
+            if (!hasDesiredPixelSize(randomArtwork.width, randomArtwork.height, minimumWidth, minimumHeight, aspectRatioSetting)) {
                 Log.v(LOG_TAG, "Image below desired pixel size")
                 continue
             }
-
-            if (isBeenDeleted(rankingArtwork.illust_id)) {
+            if (isBeenDeleted(randomArtwork.illust_id)) {
                 Log.v(LOG_TAG, "Previously deleted")
                 continue
             }
 
             for (s in selectedFilterLevelSet!!) {
-                if (s.toInt() == rankingArtwork.illust_content_type.sexual) {
-                    found = true
-                    break
+                if (s.toInt() == randomArtwork.illust_content_type.sexual) {
+                    return randomArtwork
                 }
             }
         }
-        if (!found) {
-            throw FilterMatchNotFoundException("")
-        }
-        Log.i(LOG_TAG, "filterRanking(): Exited")
-        return rankingArtwork
+        throw FilterMatchNotFoundException("")
     }
 
     /*
-        FEED / BOOKMARK / TAG / ARTIST
-     */
-    /*
-    Builds the API URL, requests the JSON containing the ranking, passes it to a separate function
-    for filtering, then downloads the image and returns it Muzei for insertion
+        Receives a list of auth artworks
+        Passes it off to filterArtworkRanking(), which returns one ranking artwork
+        Builds an Artwork object off returned ranking artwork
      */
     @Throws(FilterMatchNotFoundException::class, IOException::class, CorruptFileException::class)
     private fun getArtworkAuth(authArtworkList: List<AuthArtwork>, isRecommended: Boolean): Artwork {
@@ -557,7 +508,7 @@ class PixivArtWorker(
 
         // Filtering
         val selectedArtwork = filterArtworkAuth(
-                authArtworkList,
+                authArtworkList.toMutableList(),
                 showManga,
                 selectedFilterLevel,
                 aspectRatioSettings,
@@ -626,10 +577,9 @@ class PixivArtWorker(
             In this code x_restrict is treated as a level 8 sanity_level
 
         For manga filtering, the value of the "type" string is checked for either "manga" or "illust"
-
      */
     @Throws(FilterMatchNotFoundException::class)
-    private fun filterArtworkAuth(authArtworkList: List<AuthArtwork>,
+    private fun filterArtworkAuth(authArtworkList: MutableList<AuthArtwork>,
                                   showManga: Boolean,
                                   selectedFilterLevelSet: Set<String>?,
                                   aspectRatioSetting: Int,
@@ -639,88 +589,74 @@ class PixivArtWorker(
                                   minimumHeight: Int
     ): AuthArtwork? {
         Log.i(LOG_TAG, "filterArtworkAuth(): Entering")
-        var found = false
-        var selectedArtwork: AuthArtwork? = null
-        val shuffledArray = generateShuffledArray(authArtworkList.size)
-        loop@ for (i in authArtworkList.indices) {
-            selectedArtwork = authArtworkList[shuffledArray[i]]
-
+        authArtworkList.shuffle()
+        for (randomArtwork in authArtworkList) {
             // Check if duplicate before any other check to not waste time
-            if (isDuplicateArtwork(selectedArtwork.id)) {
-                Log.v(LOG_TAG, "Duplicate ID: " + selectedArtwork.id)
+            if (isDuplicateArtwork(randomArtwork.id)) {
+                Log.v(LOG_TAG, "Duplicate ID: " + randomArtwork.id)
                 continue
             }
 
             // If user does not want manga to display
-            if (!showManga && selectedArtwork.type != "illust") {
+            if (!showManga && randomArtwork.type != "illust") {
                 Log.d(LOG_TAG, "Manga not desired")
                 continue
             }
 
             // Filter artwork based on chosen aspect ratio
-            if (!isDesiredAspectRatio(selectedArtwork.width,
-                            selectedArtwork.height, aspectRatioSetting)) {
+            if (!isDesiredAspectRatio(randomArtwork.width,
+                            randomArtwork.height, aspectRatioSetting)) {
                 Log.d(LOG_TAG, "Rejecting aspect ratio")
                 continue
             }
 
-            if (!hasDesiredPixelSize(selectedArtwork.width, selectedArtwork.height, minimumWidth, minimumHeight, aspectRatioSetting)) {
+            if (!hasDesiredPixelSize(randomArtwork.width, randomArtwork.height, minimumWidth, minimumHeight, aspectRatioSetting)) {
                 Log.v(LOG_TAG, "Image below desired pixel size")
                 continue
             }
 
-            if (!isEnoughViews(selectedArtwork.total_view, minimumViews)) {
+            if (!isEnoughViews(randomArtwork.total_view, minimumViews)) {
                 Log.d(LOG_TAG, "Not enough views")
                 continue
             }
 
-            if (isBeenDeleted(selectedArtwork.id)) {
+            if (isBeenDeleted(randomArtwork.id)) {
                 Log.v(LOG_TAG, "Previously deleted")
                 continue
             }
 
             // All artworks in recommended are SFW, we can skip this check
             if (isRecommended) {
-                found = true
+                return randomArtwork
             } else {
                 // See if there is a match between chosen artwork's sanity level and those desired
                 for (s in selectedFilterLevelSet!!) {
-                    if (s == selectedArtwork.sanity_Level.toString()) {
-                        Log.d(LOG_TAG, "sanity_level found is " + selectedArtwork.sanity_Level)
-                        found = true
-                        break@loop
-                    } else if (s == "8" && selectedArtwork.x_restrict == 1) {
+                    if (s == randomArtwork.sanity_Level.toString()) {
+                        Log.d(LOG_TAG, "sanity_level found is " + randomArtwork.sanity_Level)
+                        return randomArtwork
+                    } else if (s == "8" && randomArtwork.x_restrict == 1) {
                         Log.d(LOG_TAG, "x_restrict found")
-                        found = true
-                        break@loop
+                        return randomArtwork
                     }
                 }
             }
         }
-        if (!found) {
-            throw FilterMatchNotFoundException("too many retries")
-        }
-        return selectedArtwork
-    }// If enough artworks are not found in the 50 from the first page of the rankings,
-    // keep looking through the next pages or days
-    // We can continue to look through the 450 rankings for that day
-    // There is a tenth page actually, but the next page number integer becomes a boolean
-    // GSON can't handle this and throws a fit.
-    // Thus I've limited my app to parsing only the top 450 rankings
-// This concat is ugly af// These modes require an access token, so we check for and acquire one first
+        throw FilterMatchNotFoundException("too many retries")
+
+    }
 
     /*
-        First method to be called
-        Sets program flow into ranking or feed/bookmark paths
-        Also acquires an access token to be passed into getArtworkAuth()
-            Why is this function the one acquiring the access token?
+        Main meat of the app
+        Obtains an up to date access token if required
+        Obtains objects that represent each update mode, and will continue to obtain objects until
+        enough artworks have satisfied
+        Returns a list of Artwork's for submission into Muzei
      */
     @get:Throws(IOException::class, CorruptFileException::class)
     private val artwork: ArrayList<Artwork>?
         get() {
             val sharedPrefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
             var updateMode = sharedPrefs.getString("pref_updateMode", "daily")
-            var accessToken = ""
 
             // These modes require an access token, so we check for and acquire one first
             if (PixivArtProviderDefines.AUTH_MODES.contains(updateMode)) {
@@ -761,6 +697,7 @@ class PixivArtWorker(
                     }
                 }
             }
+
             val artworkArrayList = ArrayList<Artwork>()
             var artwork: Artwork
             val bypassActive = sharedPrefs.getBoolean("pref_enableNetworkBypass", false)
@@ -786,7 +723,9 @@ class PixivArtWorker(
                         artworkArrayList.add(artwork)
                     } catch (e: FilterMatchNotFoundException) {
                         e.printStackTrace()
-                        call = service.getNextUrl("Bearer $accessToken", illusts!!.nextUrl)
+                        // I'm not sure how many times we can keep getting the nextUrl
+                        // TODO implement a limit on the number of nextUrls
+                        call = service.getNextUrl(illusts!!.nextUrl)
                         illusts = call.execute().body()
                         authArtworkList = illusts!!.artworks
                     }
@@ -806,9 +745,9 @@ class PixivArtWorker(
                         }
                         artworkArrayList.add(artwork)
                     } catch (e: FilterMatchNotFoundException) {
+                        e.printStackTrace()
                         // If enough artworks are not found in the 50 from the first page of the rankings,
                         // keep looking through the next pages or days
-                        e.printStackTrace()
                         // We can continue to look through the 450 rankings for that day
                         // There is a tenth page actually, but the next page number integer becomes a boolean
                         // GSON can't handle this and throws a fit.
@@ -818,6 +757,8 @@ class PixivArtWorker(
                             call = service.getRankingJson(updateMode, pageNumber, date)
                             contents = call.execute().body()
                         } else {
+                            // If we for some reason cannot find enough artwork to satisfy the filter
+                            // from the top 450, then we can look at the previous day's ranking
                             pageNumber = 1
                             call = service.getRankingJson(updateMode, pageNumber, prevDate)
                             contents = call.execute().body()
