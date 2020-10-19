@@ -26,17 +26,24 @@ import androidx.core.app.NotificationCompat
 import com.antony.muzei.pixiv.R
 import okhttp3.*
 import java.io.IOException
+import java.util.*
 
 class AddToBookmarkService : Service() {
     var client = OkHttpClient()
     override fun onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
         createNotificationChannel()
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        val notificationBuilder = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("Adding artwork to bookmarks")
-                .setContentText(intent.getStringExtra("artworkTitle") + " by" + intent.getStringExtra("artworkArtist"))
                 .setSmallIcon(R.drawable.ic_baseline_bookmark_24)
-                .build()
-        startForeground(1, notification)
+        if (Locale.getDefault().isO3Language == "zho") {
+            notificationBuilder
+                    .setContentText(intent.getStringExtra("artworkTitle") + " by " + intent.getStringExtra("artworkArtist"))
+        } else {
+            notificationBuilder
+                    .setContentText(intent.getStringExtra("artworkTitle") + " 为 " + intent.getStringExtra("artworkArtist") + " 所画")
+        }
+
+        startForeground(1, notificationBuilder.build())
 
         //do heavy work on a background thread
         val rankingUrl = HttpUrl.Builder()
