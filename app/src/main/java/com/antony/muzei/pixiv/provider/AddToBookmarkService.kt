@@ -51,7 +51,7 @@ class AddToBookmarkService : Service() {
                 .build()
         val request = Request.Builder()
                 .addHeader("Content-Type", "application/x-www-form-urlencoded")
-                .addHeader("User-Agent", PixivArtProviderDefines.APP_USER_AGENT)
+                .addHeader("User-Agent", "PixivAndroidApp/5.0.220 (Android " + Build.VERSION.RELEASE + "; " + Build.MODEL + ")")
                 .addHeader("Authorization", "Bearer " + intent.getStringExtra("accessToken"))
                 .post(authData)
                 .url(rankingUrl)

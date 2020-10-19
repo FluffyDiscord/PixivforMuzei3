@@ -169,7 +169,7 @@ object RestClient {
             val request = original.newBuilder()
                     .header(
                             "User-Agent",
-                            "PixivAndroidApp/5.0.155 (Android " + Build.VERSION.RELEASE + "; " + Build.MODEL + ")"
+                            "PixivAndroidApp/5.0.220 (Android " + Build.VERSION.RELEASE + "; " + Build.MODEL + ")"
                     )
                     .header("App-OS", "Android")
                     .header("App-OS-Version", Build.VERSION.RELEASE)
