@@ -26,8 +26,8 @@
             android:entryValues="@array/pref_updateMode_entryValues"
             android:key="pref_updateMode"
             android:persistent="true"
-            app:useSimpleSummaryProvider="true"
-            android:title="@string/pref_updateMode" />
+            android:title="@string/pref_updateMode"
+            app:useSimpleSummaryProvider="true" />
         <MultiSelectListPreference
             android:defaultValue="@array/pref_rankingFilterDefault_entryvalues"
             android:entries="@array/pref_rankingFilterLevel_entries"
@@ -68,11 +68,12 @@
         android:title="@string/prefCat_authSettings">
         <Preference android:key="pref_login" />
         <DropDownPreference
+            android:defaultValue="doNotChange_downDaily"
             android:entries="@array/array_authFailActions_entries"
             android:entryValues="@array/array_authFailActions_entryvalues"
             android:key="pref_authFailAction"
             android:persistent="true"
-            app:useSimpleSummaryProvider="true"
-            android:title="@string/pref_authFailActionDropDown" />
+            android:title="@string/pref_authFailActionDropDown"
+            app:useSimpleSummaryProvider="true" />
     </PreferenceCategory>
 </androidx.preference.PreferenceScreen>
